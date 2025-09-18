@@ -35,11 +35,7 @@ outputType = "webview"
 localPort = 5000
 externalPort = 80
 
-[[ports]]
-localPort = 40061
-externalPort = 3000
-
 [deployment]
-deploymentTarget = "autoscale"
+deploymentTarget = "cloudrun"
 run = ["npm", "run", "start"]
 build = ["npm", "run", "build"]
