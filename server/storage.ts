@@ -536,19 +536,46 @@ export class MemStorage implements IStorage {
     return uniqueUsers.size;
   }
 
+  // Weekly rotation utility
+  private getCurrentWeekNumber(): number {
+    // Use a fixed start date to ensure consistent weekly rotation
+    const startDate = new Date('2025-01-01'); // Reference start date
+    const currentDate = new Date();
+    const timeDiff = currentDate.getTime() - startDate.getTime();
+    const daysDiff = Math.floor(timeDiff / (1000 * 3600 * 24));
+    return Math.floor(daysDiff / 7);
+  }
+
+  private getWeeklyRitualSet(): MicroRitual[] {
+    const allRituals = Array.from(this.microRituals.values());
+    const weekNumber = this.getCurrentWeekNumber();
+    
+    // Create consistent weekly sets by grouping rituals
+    const weeklySetSize = 4; // 4 rituals per week for variety
+    const totalWeeks = Math.ceil(allRituals.length / weeklySetSize);
+    const currentWeekIndex = weekNumber % totalWeeks;
+    
+    const startIndex = currentWeekIndex * weeklySetSize;
+    const endIndex = Math.min(startIndex + weeklySetSize, allRituals.length);
+    
+    return allRituals.slice(startIndex, endIndex);
+  }
+
   // Micro Rituals
   async getMicroRituals(): Promise<MicroRitual[]> {
-    return Array.from(this.microRituals.values());
+    return this.getWeeklyRitualSet();
   }
 
   async getMicroRitualsByCategory(category: string): Promise<MicroRitual[]> {
-    return Array.from(this.microRituals.values()).filter(
+    const weeklySet = this.getWeeklyRitualSet();
+    return weeklySet.filter(
       (ritual) => ritual.category === category
     );
   }
 
   async getMicroRitualsByRole(role: string): Promise<MicroRitual[]> {
-    return Array.from(this.microRituals.values()).filter(
+    const weeklySet = this.getWeeklyRitualSet();
+    return weeklySet.filter(
       (ritual) => (ritual.applicableRoles as string[]).includes(role)
     );
   }
