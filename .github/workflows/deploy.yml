@@ -1,0 +1,14 @@
+name: Deploy to Replit
+on:
+  push:
+    branches: [ "main" ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Trigger Replit webhook
+        run: curl -X POST ${{ secrets.REPLIT_WEBHOOK_URL }}
