@@ -343,7 +343,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const school = await storage.createSchool(validatedData);
           results.push({ success: true, school });
         } catch (error) {
-          results.push({ success: false, error: error.message, data: schoolData });
+          results.push({ success: false, error: error instanceof Error ? error.message : "Unknown error", data: schoolData });
         }
       }
 
