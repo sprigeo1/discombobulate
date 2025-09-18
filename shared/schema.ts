@@ -7,6 +7,9 @@ import { z } from "zod";
 export const schools = pgTable("schools", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   name: text("name").notNull(),
+  district: text("district").notNull(),
+  city: text("city").notNull(),
+  state: text("state").notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
@@ -15,6 +18,7 @@ export const users = pgTable("users", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   schoolId: varchar("school_id").references(() => schools.id).notNull(),
   role: text("role").notNull(), // "student", "staff", "administrator", "counselor"
+  accessCode: varchar("access_code", { length: 4 }).notNull().unique(),
   lastAssessmentDate: timestamp("last_assessment_date"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
@@ -61,6 +65,14 @@ export const microRitualCompletions = pgTable("micro_ritual_completions", {
   completedAt: timestamp("completed_at").defaultNow().notNull(),
 });
 
+// Micro ritual attempts table (for tracking what users tried)
+export const microRitualAttempts = pgTable("micro_ritual_attempts", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").references(() => users.id).notNull(),
+  attemptedRituals: text("attempted_rituals").notNull(), // Description of what they tried
+  attemptedAt: timestamp("attempted_at").defaultNow().notNull(),
+});
+
 // School scores table
 export const schoolScores = pgTable("school_scores", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -73,11 +85,17 @@ export const schoolScores = pgTable("school_scores", {
 // Insert schemas
 export const insertSchoolSchema = createInsertSchema(schools).pick({
   name: true,
+  district: true,
+  city: true,
+  state: true,
 });
 
 export const insertUserSchema = createInsertSchema(users).pick({
   schoolId: true,
   role: true,
+  accessCode: true,
+}).extend({
+  accessCode: z.string().length(4).optional(),
 });
 
 export const insertResponseSchema = createInsertSchema(responses).pick({
@@ -89,6 +107,11 @@ export const insertResponseSchema = createInsertSchema(responses).pick({
 export const insertMicroRitualCompletionSchema = createInsertSchema(microRitualCompletions).pick({
   userId: true,
   microRitualId: true,
+});
+
+export const insertMicroRitualAttemptSchema = createInsertSchema(microRitualAttempts).pick({
+  userId: true,
+  attemptedRituals: true,
 });
 
 // Types
@@ -105,5 +128,8 @@ export type InsertResponse = z.infer<typeof insertResponseSchema>;
 export type MicroRitual = typeof microRituals.$inferSelect;
 export type MicroRitualCompletion = typeof microRitualCompletions.$inferSelect;
 export type InsertMicroRitualCompletion = z.infer<typeof insertMicroRitualCompletionSchema>;
+
+export type MicroRitualAttempt = typeof microRitualAttempts.$inferSelect;
+export type InsertMicroRitualAttempt = z.infer<typeof insertMicroRitualAttemptSchema>;
 
 export type SchoolScore = typeof schoolScores.$inferSelect;

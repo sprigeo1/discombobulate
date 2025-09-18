@@ -5,7 +5,8 @@ import {
   insertSchoolSchema, 
   insertUserSchema, 
   insertResponseSchema, 
-  insertMicroRitualCompletionSchema 
+  insertMicroRitualCompletionSchema,
+  insertMicroRitualAttemptSchema
 } from "@shared/schema";
 import { z } from "zod";
 
@@ -28,6 +29,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // School search for autocomplete (must come before /:id route)
+  app.get("/api/schools/search", async (req, res) => {
+    try {
+      const { q } = req.query;
+      if (!q || typeof q !== 'string') {
+        return res.json([]);
+      }
+      const schools = await storage.searchSchools(q);
+      res.json(schools);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to search schools" });
+    }
+  });
+
   app.get("/api/schools/:id", async (req, res) => {
     try {
       const school = await storage.getSchool(req.params.id);
@@ -44,6 +59,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/users", async (req, res) => {
     try {
       const validatedData = insertUserSchema.parse(req.body);
+      // Generate unique access code if not provided
+      if (!validatedData.accessCode) {
+        validatedData.accessCode = await storage.generateUniqueAccessCode();
+      }
       const user = await storage.createUser(validatedData);
       res.json(user);
     } catch (error) {
@@ -69,6 +88,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json({ canTakeAssessment: canTake });
     } catch (error) {
       res.status(500).json({ error: "Failed to check assessment eligibility" });
+    }
+  });
+
+  app.get("/api/users/access-code/:accessCode", async (req, res) => {
+    try {
+      const user = await storage.getUserByAccessCode(req.params.accessCode);
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+      res.json(user);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch user by access code" });
     }
   });
 
@@ -118,7 +149,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       res.json({ 
         message: "Assessment submitted successfully", 
-        schoolScore 
+        schoolScore,
+        accessCode: user.accessCode
       });
     } catch (error) {
       console.error("Assessment submission error:", error);
@@ -181,6 +213,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Micro ritual attempts
+  app.post("/api/micro-ritual-attempts", async (req, res) => {
+    try {
+      const validatedData = insertMicroRitualAttemptSchema.parse(req.body);
+      const attempt = await storage.createMicroRitualAttempt(validatedData);
+      res.json(attempt);
+    } catch (error) {
+      res.status(400).json({ error: "Invalid attempt data" });
+    }
+  });
+
+  app.get("/api/users/:userId/micro-ritual-attempts", async (req, res) => {
+    try {
+      const attempts = await storage.getMicroRitualAttemptsByUser(req.params.userId);
+      res.json(attempts);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch attempts" });
+    }
+  });
+
   // School scores
   app.get("/api/schools/:schoolId/score", async (req, res) => {
     try {
@@ -205,6 +257,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.get("/api/schools/:schoolId/assessment-count", async (req, res) => {
+    try {
+      const count = await storage.getAssessmentCountInCurrentPeriod(req.params.schoolId);
+      res.json({ assessmentCount: count });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch assessment count" });
+    }
+  });
+
   // User responses
   app.get("/api/users/:userId/responses", async (req, res) => {
     try {
@@ -214,6 +275,84 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ error: "Failed to fetch user responses" });
     }
   });
+
+  // Admin routes
+  app.post("/api/admin/auth", async (req, res) => {
+    try {
+      const { accessCode } = req.body;
+      if (accessCode === "6056") {
+        res.json({ authenticated: true });
+      } else {
+        res.status(401).json({ error: "Invalid access code" });
+      }
+    } catch (error) {
+      res.status(400).json({ error: "Invalid request" });
+    }
+  });
+
+  // School management routes
+  app.get("/api/admin/schools", async (req, res) => {
+    try {
+      const schools = await storage.getAllSchools();
+      res.json(schools);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch schools" });
+    }
+  });
+
+  app.post("/api/admin/schools", async (req, res) => {
+    try {
+      const validatedData = insertSchoolSchema.parse(req.body);
+      const school = await storage.createSchool(validatedData);
+      res.json(school);
+    } catch (error) {
+      res.status(400).json({ error: "Invalid school data" });
+    }
+  });
+
+  app.put("/api/admin/schools/:id", async (req, res) => {
+    try {
+      const validatedData = insertSchoolSchema.partial().parse(req.body);
+      const school = await storage.updateSchool(req.params.id, validatedData);
+      res.json(school);
+    } catch (error) {
+      res.status(400).json({ error: "Invalid school data" });
+    }
+  });
+
+  app.delete("/api/admin/schools/:id", async (req, res) => {
+    try {
+      await storage.deleteSchool(req.params.id);
+      res.json({ message: "School deleted successfully" });
+    } catch (error) {
+      res.status(404).json({ error: "School not found" });
+    }
+  });
+
+  app.post("/api/admin/schools/bulk-upload", async (req, res) => {
+    try {
+      const { schools } = req.body;
+      if (!Array.isArray(schools)) {
+        return res.status(400).json({ error: "Invalid data format" });
+      }
+
+      const results = [];
+      for (const schoolData of schools) {
+        try {
+          const validatedData = insertSchoolSchema.parse(schoolData);
+          const school = await storage.createSchool(validatedData);
+          results.push({ success: true, school });
+        } catch (error) {
+          results.push({ success: false, error: error.message, data: schoolData });
+        }
+      }
+
+      res.json({ results });
+    } catch (error) {
+      res.status(400).json({ error: "Invalid bulk upload data" });
+    }
+  });
+
 
   // Health check
   app.get("/api/health", (req, res) => {

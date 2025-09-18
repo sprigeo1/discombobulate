@@ -1,51 +1,42 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
-import { School, Building, User } from "lucide-react";
+import { School, Building, User, Settings } from "lucide-react";
 import { UserRole } from "./RoleSelector";
+import SchoolAutocomplete from "./SchoolAutocomplete";
+import { School as SchoolType } from "@shared/schema";
 
 interface SchoolSetupProps {
-  onSetupComplete: (data: { schoolId: string; userId: string; role: UserRole; schoolName: string }) => void;
+  onSetupComplete: (data: { schoolId: string; userId: string; role: UserRole; schoolName: string; accessCode: string }) => void;
 }
 
 export default function SchoolSetup({ onSetupComplete }: SchoolSetupProps) {
   const [schoolName, setSchoolName] = useState("");
+  const [selectedSchool, setSelectedSchool] = useState<SchoolType | null>(null);
   const [selectedRole, setSelectedRole] = useState<UserRole | "">("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const { toast } = useToast();
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    
-    if (!schoolName.trim() || !selectedRole) {
-      toast({
-        title: "Missing Information",
-        description: "Please provide both school name and your role.",
-        variant: "destructive",
-      });
-      return;
+  // Auto-submit when both school and role are selected
+  useEffect(() => {
+    if (selectedSchool && selectedRole && !isSubmitting) {
+      handleSubmit();
+    }
+  }, [selectedSchool, selectedRole]);
+
+  const handleSubmit = async () => {
+    if (!selectedSchool || !selectedRole) {
+      return; // Don't show error, just wait for both to be filled
     }
 
     setIsSubmitting(true);
 
     try {
-      // Step 1: Create or get school
-      const schoolResponse = await fetch("/api/schools", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ name: schoolName.trim() }),
-      });
-
-      if (!schoolResponse.ok) {
-        throw new Error("Failed to create/find school");
-      }
-
-      const { school, isNew } = await schoolResponse.json();
+      // Use the selected school directly
+      const school = selectedSchool;
 
       // Step 2: Create user
       const userResponse = await fetch("/api/users", {
@@ -66,10 +57,8 @@ export default function SchoolSetup({ onSetupComplete }: SchoolSetupProps) {
       const user = await userResponse.json();
 
       toast({
-        title: isNew ? "Welcome to Discombobulate!" : "Welcome back!",
-        description: isNew 
-          ? `${schoolName} has been registered successfully.`
-          : `Connected to ${schoolName}'s community assessment.`,
+        title: "Welcome to Discombobulate!",
+        description: `Connected to ${school.name} in ${school.district}, ${school.city}, ${school.state}.`,
       });
 
       onSetupComplete({
@@ -77,6 +66,7 @@ export default function SchoolSetup({ onSetupComplete }: SchoolSetupProps) {
         userId: user.id,
         role: selectedRole as UserRole,
         schoolName: school.name,
+        accessCode: user.accessCode,
       });
 
     } catch (error) {
@@ -126,34 +116,26 @@ export default function SchoolSetup({ onSetupComplete }: SchoolSetupProps) {
             <School className="w-6 h-6 text-primary" />
           </div>
           <div>
-            <CardTitle className="text-2xl">Join Your School Community</CardTitle>
+            <CardTitle className="text-2xl">Welcome to the Discombobulator</CardTitle>
             <CardDescription>
-              Help us understand your school's relationship dynamics
+              Re-thinking what makes a safer school
             </CardDescription>
           </div>
         </CardHeader>
 
         <CardContent>
-          <form onSubmit={handleSubmit} className="space-y-6">
+          <div className="space-y-6">
             {/* School Name Input */}
-            <div className="space-y-2">
-              <Label htmlFor="schoolName" className="flex items-center space-x-2">
-                <Building className="w-4 h-4" />
-                <span>School Name</span>
-              </Label>
-              <Input
-                id="schoolName"
-                type="text"
-                placeholder="Enter your school's name"
-                value={schoolName}
-                onChange={(e) => setSchoolName(e.target.value)}
-                disabled={isSubmitting}
-                data-testid="input-school-name"
-              />
-              <p className="text-xs text-muted-foreground">
-                This will connect you with other community members from your school
-              </p>
-            </div>
+            <SchoolAutocomplete
+              value={schoolName}
+              onChange={setSchoolName}
+              onSelect={setSelectedSchool}
+              disabled={isSubmitting}
+              data-testid="input-school-name"
+            />
+            <p className="text-xs text-muted-foreground">
+              Click on the button below that best matches where you belong at your school. Then answer the short list of questions.
+            </p>
 
             {/* Role Selection */}
             <div className="space-y-3">
@@ -168,8 +150,8 @@ export default function SchoolSetup({ onSetupComplete }: SchoolSetupProps) {
                         selectedRole === option.value 
                           ? "border-primary bg-primary/5" 
                           : "border-border"
-                      }`}
-                      onClick={() => setSelectedRole(option.value)}
+                      } ${isSubmitting ? "opacity-50 cursor-not-allowed" : ""}`}
+                      onClick={() => !isSubmitting && setSelectedRole(option.value)}
                       data-testid={`button-role-${option.value}`}
                     >
                       <div className="flex items-start space-x-3">
@@ -187,19 +169,29 @@ export default function SchoolSetup({ onSetupComplete }: SchoolSetupProps) {
               </div>
             </div>
 
-            <Button 
-              type="submit" 
-              className="w-full" 
-              disabled={isSubmitting || !schoolName.trim() || !selectedRole}
-              data-testid="button-continue-setup"
-            >
-              {isSubmitting ? "Setting up..." : "Continue to Assessment"}
-            </Button>
-          </form>
+            {isSubmitting && (
+              <div className="text-center py-4">
+                <div className="text-sm text-muted-foreground">
+                  Setting up your account and generating your access code...
+                </div>
+              </div>
+            )}
+          </div>
 
           <div className="mt-6 text-center">
-            <p className="text-xs text-muted-foreground">
+            <p className="text-xs text-muted-foreground flex items-center justify-center gap-2">
               Your responses will be anonymous and used only to improve your school community
+              <button
+                onClick={() => {
+                  // This will be handled by the parent component
+                  window.dispatchEvent(new CustomEvent('admin-access-requested'));
+                }}
+                className="ml-2 p-1 hover:bg-muted rounded transition-colors"
+                data-testid="button-admin-access"
+                title="Administrator Access"
+              >
+                <Settings className="w-3 h-3 text-muted-foreground hover:text-foreground" />
+              </button>
             </p>
           </div>
         </CardContent>

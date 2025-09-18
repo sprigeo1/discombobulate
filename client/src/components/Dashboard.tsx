@@ -5,11 +5,16 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import SchoolSetup from "./SchoolSetup";
+import AccessCodeEntry from "./AccessCodeEntry";
+import MicroRitualTracking from "./MicroRitualTracking";
+import MicroRitualExamples from "./MicroRitualExamples";
+import AdminAuth from "./AdminAuth";
+import AdminDashboard from "./AdminDashboard";
 import AssessmentQuestion, { Question } from "./AssessmentQuestion";
 import RelationshipChart, { RelationshipData } from "./RelationshipChart";
 import MicroRitualCard, { MicroRitual } from "./MicroRitualCard";
 import ProgressTracker, { CommunityProgress } from "./ProgressTracker";
-import { BarChart3, Users, Target, TrendingUp, BookOpen, Clock } from "lucide-react";
+import { BarChart3, Users, Target, TrendingUp, BookOpen, Clock, Settings } from "lucide-react";
 import { UserRole } from "./RoleSelector";
 
 interface UserSession {
@@ -17,16 +22,18 @@ interface UserSession {
   userId: string;
   role: UserRole;
   schoolName: string;
+  accessCode: string;
 }
 
 export default function Dashboard() {
   const [userSession, setUserSession] = useState<UserSession | null>(null);
-  const [currentView, setCurrentView] = useState<"setup" | "assessment" | "results" | "cooldown">("setup");
+  const [currentView, setCurrentView] = useState<"access-code" | "setup" | "micro-ritual-tracking" | "assessment" | "results" | "cooldown" | "micro-ritual-examples" | "admin-auth" | "admin-dashboard">("access-code");
   const [currentQuestion, setCurrentQuestion] = useState(0);
   const [questions, setQuestions] = useState<Question[]>([]);
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [microRituals, setMicroRituals] = useState<MicroRitual[]>([]);
   const [schoolScore, setSchoolScore] = useState<any>(null);
+  const [assessmentCount, setAssessmentCount] = useState<number>(0);
   const [isLoading, setIsLoading] = useState(false);
   const [cooldownInfo, setCooldownInfo] = useState<any>(null);
   const { toast } = useToast();
@@ -38,6 +45,25 @@ export default function Dashboard() {
       loadMicroRituals();
     }
   }, [userSession]);
+
+  // Load assessment count when results view is displayed
+  useEffect(() => {
+    if (currentView === "results" && userSession) {
+      loadAssessmentCount();
+    }
+  }, [currentView, userSession]);
+
+  // Listen for admin access requests
+  useEffect(() => {
+    const handleAdminAccessRequest = () => {
+      handleAdminAccess();
+    };
+
+    window.addEventListener('admin-access-requested', handleAdminAccessRequest);
+    return () => {
+      window.removeEventListener('admin-access-requested', handleAdminAccessRequest);
+    };
+  }, []);
 
   const checkAssessmentEligibility = async () => {
     if (!userSession) return;
@@ -103,9 +129,56 @@ export default function Dashboard() {
     }
   };
 
+  const loadAssessmentCount = async () => {
+    if (!userSession) return;
+    
+    try {
+      const response = await fetch(`/api/schools/${userSession.schoolId}/assessment-count`);
+      if (response.ok) {
+        const data = await response.json();
+        setAssessmentCount(data.assessmentCount);
+      }
+    } catch (error) {
+      console.error("Error loading assessment count:", error);
+    }
+  };
+
   const handleSetupComplete = (sessionData: UserSession) => {
     setUserSession(sessionData);
     setCurrentView("assessment");
+  };
+
+  const handleAccessCodeValid = (sessionData: UserSession) => {
+    setUserSession(sessionData);
+    setCurrentView("micro-ritual-tracking");
+  };
+
+  const handleFirstTimeUser = () => {
+    setCurrentView("setup");
+  };
+
+  const handleMicroRitualTrackingComplete = () => {
+    setCurrentView("assessment");
+  };
+
+  const handleMicroRitualTrackingSkip = () => {
+    setCurrentView("assessment");
+  };
+
+  const handleAdminAccess = () => {
+    setCurrentView("admin-auth");
+  };
+
+  const handleAdminAuthenticated = () => {
+    setCurrentView("admin-dashboard");
+  };
+
+  const handleAdminCancel = () => {
+    setCurrentView("access-code");
+  };
+
+  const handleAdminClose = () => {
+    setCurrentView("access-code");
   };
 
   const handleAnswerSelect = (questionId: string, answer: string) => {
@@ -185,12 +258,18 @@ export default function Dashboard() {
 
       const result = await response.json();
       setSchoolScore(result.schoolScore);
-      setCurrentView("results");
-
+      
+      // Load assessment count for the results page
+      await loadAssessmentCount();
+      
+      // Show access code and 7-day message
       toast({
         title: "Assessment Complete!",
-        description: "Your responses have been recorded and your school's score has been updated.",
+        description: `Your access code is: ${result.accessCode}. You can return in 7 days to take another assessment.`,
+        duration: 10000, // Show for 10 seconds
       });
+      
+      setCurrentView("micro-ritual-examples");
 
     } catch (error) {
       console.error("Error submitting assessment:", error);
@@ -246,8 +325,65 @@ export default function Dashboard() {
     }));
   };
 
+  if (currentView === "admin-auth") {
+    return <AdminAuth onAuthenticated={handleAdminAuthenticated} onCancel={handleAdminCancel} />;
+  }
+
+  if (currentView === "admin-dashboard") {
+    return <AdminDashboard onClose={handleAdminClose} />;
+  }
+
+  if (currentView === "access-code") {
+    return (
+      <div className="relative">
+        <AccessCodeEntry onAccessCodeValid={handleAccessCodeValid} onFirstTimeUser={handleFirstTimeUser} />
+        {/* Invisible admin access button */}
+        <button
+          onClick={handleAdminAccess}
+          className="absolute bottom-4 right-4 w-8 h-8 opacity-0 hover:opacity-100 transition-opacity"
+          data-testid="button-admin-access"
+          title="Administrator Access"
+        >
+          <Settings className="w-6 h-6 text-muted-foreground" />
+        </button>
+      </div>
+    );
+  }
+
   if (currentView === "setup") {
-    return <SchoolSetup onSetupComplete={handleSetupComplete} />;
+    return (
+      <div className="relative">
+        <SchoolSetup onSetupComplete={handleSetupComplete} />
+        {/* Admin access button for setup view */}
+        <button
+          onClick={handleAdminAccess}
+          className="absolute bottom-4 right-4 p-2 hover:bg-muted rounded transition-colors"
+          data-testid="button-admin-access-setup"
+          title="Administrator Access"
+        >
+          <Settings className="w-4 h-4 text-muted-foreground hover:text-foreground" />
+        </button>
+      </div>
+    );
+  }
+
+  if (currentView === "micro-ritual-tracking") {
+    return (
+      <MicroRitualTracking
+        onContinue={handleMicroRitualTrackingComplete}
+        onSkip={handleMicroRitualTrackingSkip}
+        userId={userSession?.userId || ""}
+      />
+    );
+  }
+
+  if (currentView === "micro-ritual-examples") {
+    return (
+      <MicroRitualExamples
+        userRole={userSession?.role || "student"}
+        onClose={() => setCurrentView("results")}
+      />
+    );
   }
 
   if (currentView === "cooldown") {
@@ -267,6 +403,22 @@ export default function Dashboard() {
             <p className="text-sm text-muted-foreground">
               In the meantime, explore micro-rituals and view your school's progress!
             </p>
+            
+            {/* Access Code Display */}
+            <div className="bg-muted/50 p-4 rounded-lg">
+              <div className="text-center space-y-2">
+                <p className="text-sm font-medium">Your Access Code</p>
+                <div className="bg-background px-3 py-2 rounded-md border inline-block">
+                  <code className="text-lg font-mono tracking-widest text-primary">
+                    {userSession?.accessCode}
+                  </code>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Save this code to return for your next assessment
+                </p>
+              </div>
+            </div>
+            
             <Button 
               onClick={() => setCurrentView("results")}
               className="w-full"
@@ -347,10 +499,29 @@ export default function Dashboard() {
 
             <TabsContent value="results" className="space-y-6">
               {schoolScore ? (
-                <RelationshipChart 
-                  data={convertToChartData(schoolScore)} 
-                  overallScore={schoolScore.overallScore} 
-                />
+                <div className="space-y-6">
+                  <RelationshipChart 
+                    data={convertToChartData(schoolScore)} 
+                    overallScore={schoolScore.overallScore} 
+                  />
+                  
+                  {/* Assessment Count Display */}
+                  <Card className="border-blue-200 bg-blue-50">
+                    <CardContent className="pt-6">
+                      <div className="text-center space-y-2">
+                        <h3 className="font-semibold text-lg text-blue-900">
+                          Community Participation
+                        </h3>
+                        <p className="text-blue-700">
+                          <span className="text-2xl font-bold">{assessmentCount}</span> community members have completed assessments in the current 7-day period
+                        </p>
+                        <p className="text-sm text-blue-600">
+                          This score reflects the collective input of all participants at {userSession?.schoolName}
+                        </p>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </div>
               ) : (
                 <div className="text-center py-8">
                   <p className="text-muted-foreground">Loading school results...</p>
@@ -381,19 +552,47 @@ export default function Dashboard() {
           {/* Action Bar */}
           <Card className="border-primary/20 bg-primary/5">
             <CardContent className="pt-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="font-semibold text-lg">Continue Building Community</h3>
-                  <p className="text-muted-foreground">
-                    Complete micro-rituals and return in 7 days for your next assessment
-                  </p>
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="font-semibold text-lg">Continue Building Community</h3>
+                    <p className="text-muted-foreground">
+                      Complete micro-rituals and return in 7 days for your next assessment
+                    </p>
+                  </div>
+                  <div className="flex gap-3">
+                    <Button 
+                      variant="outline"
+                      onClick={() => setCurrentView("micro-ritual-examples")}
+                      data-testid="button-try-micro-rituals"
+                    >
+                      Try these Micro-rituals
+                    </Button>
+                    <Button 
+                      onClick={() => setCurrentView("access-code")}
+                      data-testid="button-new-assessment"
+                    >
+                      New Assessment
+                    </Button>
+                  </div>
                 </div>
-                <Button 
-                  onClick={() => setCurrentView("setup")}
-                  data-testid="button-new-assessment"
-                >
-                  New Assessment
-                </Button>
+                
+                {/* Access Code Display */}
+                <div className="pt-4 border-t border-primary/10">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-medium">Your Access Code</p>
+                      <p className="text-xs text-muted-foreground">
+                        Save this code to return for your next assessment in 7 days
+                      </p>
+                    </div>
+                    <div className="bg-background px-3 py-2 rounded-md border">
+                      <code className="text-lg font-mono tracking-widest text-primary">
+                        {userSession?.accessCode}
+                      </code>
+                    </div>
+                  </div>
+                </div>
               </div>
             </CardContent>
           </Card>

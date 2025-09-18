@@ -3,6 +3,7 @@ import {
   type User, type InsertUser,
   type Question, type Response, type InsertResponse,
   type MicroRitual, type MicroRitualCompletion, type InsertMicroRitualCompletion,
+  type MicroRitualAttempt, type InsertMicroRitualAttempt,
   type SchoolScore
 } from "@shared/schema";
 import { randomUUID } from "crypto";
@@ -12,13 +13,19 @@ export interface IStorage {
   createSchool(school: InsertSchool): Promise<School>;
   getSchoolByName(name: string): Promise<School | undefined>;
   getSchool(id: string): Promise<School | undefined>;
+  searchSchools(query: string): Promise<School[]>;
+  getAllSchools(): Promise<School[]>;
+  updateSchool(id: string, school: Partial<InsertSchool>): Promise<School>;
+  deleteSchool(id: string): Promise<void>;
 
   // Users
   createUser(user: InsertUser): Promise<User>;
   getUser(id: string): Promise<User | undefined>;
+  getUserByAccessCode(accessCode: string): Promise<User | undefined>;
   getUsersBySchool(schoolId: string): Promise<User[]>;
   updateUserLastAssessment(userId: string): Promise<void>;
   canUserTakeAssessment(userId: string): Promise<boolean>;
+  generateUniqueAccessCode(): Promise<string>;
 
   // Questions
   getQuestionsByRole(role: string): Promise<Question[]>;
@@ -39,10 +46,15 @@ export interface IStorage {
   createMicroRitualCompletion(completion: InsertMicroRitualCompletion): Promise<MicroRitualCompletion>;
   getMicroRitualCompletionsByUser(userId: string): Promise<MicroRitualCompletion[]>;
 
+  // Micro Ritual Attempts
+  createMicroRitualAttempt(attempt: InsertMicroRitualAttempt): Promise<MicroRitualAttempt>;
+  getMicroRitualAttemptsByUser(userId: string): Promise<MicroRitualAttempt[]>;
+
   // School Scores
   calculateAndStoreSchoolScore(schoolId: string): Promise<SchoolScore>;
   getLatestSchoolScore(schoolId: string): Promise<SchoolScore | undefined>;
   getSchoolScoreHistory(schoolId: string): Promise<SchoolScore[]>;
+  getAssessmentCountInCurrentPeriod(schoolId: string): Promise<number>;
 }
 
 export class MemStorage implements IStorage {
@@ -52,6 +64,7 @@ export class MemStorage implements IStorage {
   private responses: Map<string, Response> = new Map();
   private microRituals: Map<string, MicroRitual> = new Map();
   private microRitualCompletions: Map<string, MicroRitualCompletion> = new Map();
+  private microRitualAttempts: Map<string, MicroRitualAttempt> = new Map();
   private schoolScores: Map<string, SchoolScore> = new Map();
 
   constructor() {
@@ -75,6 +88,39 @@ export class MemStorage implements IStorage {
     return Array.from(this.schools.values()).find(
       (school) => school.name.toLowerCase() === name.toLowerCase()
     );
+  }
+
+  async searchSchools(query: string): Promise<School[]> {
+    const searchTerm = query.toLowerCase();
+    return Array.from(this.schools.values()).filter(
+      (school) => 
+        school.name.toLowerCase().includes(searchTerm) ||
+        school.district.toLowerCase().includes(searchTerm) ||
+        school.city.toLowerCase().includes(searchTerm) ||
+        school.state.toLowerCase().includes(searchTerm)
+    );
+  }
+
+  async getAllSchools(): Promise<School[]> {
+    return Array.from(this.schools.values());
+  }
+
+  async updateSchool(id: string, schoolData: Partial<InsertSchool>): Promise<School> {
+    const existingSchool = this.schools.get(id);
+    if (!existingSchool) {
+      throw new Error("School not found");
+    }
+    
+    const updatedSchool = { ...existingSchool, ...schoolData };
+    this.schools.set(id, updatedSchool);
+    return updatedSchool;
+  }
+
+  async deleteSchool(id: string): Promise<void> {
+    if (!this.schools.has(id)) {
+      throw new Error("School not found");
+    }
+    this.schools.delete(id);
   }
 
   async getSchool(id: string): Promise<School | undefined> {
@@ -118,6 +164,32 @@ export class MemStorage implements IStorage {
     
     const daysSinceLastAssessment = (Date.now() - user.lastAssessmentDate.getTime()) / (1000 * 60 * 60 * 24);
     return daysSinceLastAssessment >= 7;
+  }
+
+  async getUserByAccessCode(accessCode: string): Promise<User | undefined> {
+    return Array.from(this.users.values()).find(
+      (user) => user.accessCode === accessCode
+    );
+  }
+
+  async generateUniqueAccessCode(): Promise<string> {
+    const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+    let code: string;
+    let attempts = 0;
+    
+    do {
+      code = '';
+      for (let i = 0; i < 4; i++) {
+        code += characters.charAt(Math.floor(Math.random() * characters.length));
+      }
+      attempts++;
+    } while (await this.getUserByAccessCode(code) && attempts < 100);
+    
+    if (attempts >= 100) {
+      throw new Error('Unable to generate unique access code');
+    }
+    
+    return code;
   }
 
   // Questions
@@ -434,9 +506,32 @@ export class MemStorage implements IStorage {
     const schoolUsers = await this.getUsersBySchool(schoolId);
     const userIds = schoolUsers.map(user => user.id);
     
+    // Only include responses from the last 7 days
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+    
     return Array.from(this.responses.values()).filter(
-      (response) => userIds.includes(response.userId)
+      (response) => userIds.includes(response.userId) && 
+                   response.submittedAt >= sevenDaysAgo
     );
+  }
+
+  async getAssessmentCountInCurrentPeriod(schoolId: string): Promise<number> {
+    const schoolUsers = await this.getUsersBySchool(schoolId);
+    const userIds = schoolUsers.map(user => user.id);
+    
+    // Count unique users who have taken assessments in the last 7 days
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+    
+    const recentResponses = Array.from(this.responses.values()).filter(
+      (response) => userIds.includes(response.userId) && 
+                   response.submittedAt >= sevenDaysAgo
+    );
+    
+    // Count unique users who have responses in this period
+    const uniqueUsers = new Set(recentResponses.map(response => response.userId));
+    return uniqueUsers.size;
   }
 
   // Micro Rituals
@@ -713,6 +808,24 @@ export class MemStorage implements IStorage {
   async getMicroRitualCompletionsByUser(userId: string): Promise<MicroRitualCompletion[]> {
     return Array.from(this.microRitualCompletions.values()).filter(
       (completion) => completion.userId === userId
+    );
+  }
+
+  // Micro Ritual Attempts
+  async createMicroRitualAttempt(insertAttempt: InsertMicroRitualAttempt): Promise<MicroRitualAttempt> {
+    const id = randomUUID();
+    const attempt: MicroRitualAttempt = {
+      ...insertAttempt,
+      id,
+      attemptedAt: new Date(),
+    };
+    this.microRitualAttempts.set(id, attempt);
+    return attempt;
+  }
+
+  async getMicroRitualAttemptsByUser(userId: string): Promise<MicroRitualAttempt[]> {
+    return Array.from(this.microRitualAttempts.values()).filter(
+      (attempt) => attempt.userId === userId
     );
   }
 
