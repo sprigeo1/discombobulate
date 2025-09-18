@@ -130,9 +130,11 @@ export class MemStorage implements IStorage {
   // Users
   async createUser(insertUser: InsertUser): Promise<User> {
     const id = randomUUID();
+    const accessCode = insertUser.accessCode || await this.generateUniqueAccessCode();
     const user: User = {
       ...insertUser,
       id,
+      accessCode,
       lastAssessmentDate: null,
       createdAt: new Date(),
     };
